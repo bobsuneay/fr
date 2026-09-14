@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ros2_hkv_gripper</name>
+  <version>0.0.1</version>
+  <description>ROS2 C++ package for controlling TG-9801 gripper via serial port (extensible for other models)</description>
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>Apache License 2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>rclcpp_lifecycle</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>rclpy</depend>
+  <depend>interactive_markers</depend>
+  <depend>visualization_msgs</depend>
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <depend>hardware_interface</depend>
+  <depend>pluginlib</depend>
+  <depend>controller_interface</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <hardware_interface plugin="${prefix}/gripper_hardware_interface_plugin.xml"/>
+    <controller_interface plugin="${prefix}/gripper_controller_plugin.xml"/>
+  </export>
+</package>

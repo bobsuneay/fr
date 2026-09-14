@@ -1,0 +1,7 @@
+<library path="ros2_hkv_gripper_activation">
+  <class name="ros2_hkv_gripper/GripperActivationController" type="hkv_gripper_controller::GripperActivationController" base_class_type="controller_interface::ControllerInterface">
+    <description>
+      Controller for gripper activation and reactivation
+    </description>
+  </class>
+</library>

@@ -1,0 +1,8 @@
+# GripperCommand.srv
+# Request to control gripper
+bool command  # true = grip, false = release
+uint16 speed  # optional speed (200~1500). 0 means use default (1000)
+---
+# Response from gripper control
+bool success  # true if command sent successfully
+string message  # status message

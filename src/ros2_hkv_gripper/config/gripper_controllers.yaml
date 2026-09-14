@@ -1,0 +1,32 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    tg9801_gripper_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    tg9801_activation_controller:
+      type: ros2_hkv_gripper/GripperActivationController
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      - gripper_joint
+    interfaces:
+      - position
+      - velocity
+
+tg9801_gripper_controller:
+  ros__parameters:
+    joints:
+      - gripper_joint
+    interface_name: position
+    state_interfaces:
+      - position
+      - velocity
+    command_interfaces:
+      - position
+

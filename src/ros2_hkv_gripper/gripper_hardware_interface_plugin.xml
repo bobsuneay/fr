@@ -1,0 +1,7 @@
+<library path="ros2_hkv_gripper_core">
+  <class name="ros2_hkv_gripper/GripperHardwareInterface" type="hkv_gripper_controller::GripperHardwareInterface" base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Hardware interface for gripper control via serial port (Modbus RTU)
+    </description>
+  </class>
+</library>

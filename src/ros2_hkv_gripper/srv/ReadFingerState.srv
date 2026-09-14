@@ -1,0 +1,2 @@
+---
+int16[] fingers  # 6 registers from 0x0000-0x0005
