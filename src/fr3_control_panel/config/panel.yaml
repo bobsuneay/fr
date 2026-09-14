@@ -1,0 +1,18 @@
+group: fairino3_v6_group
+frame: base_link
+tcp: gripper_tcp
+joints: [j1, j2, j3, j4, j5, j6]
+joint_topic: /joint_states
+move_action: /move_action
+fk_service: /compute_fk
+scene_service: /apply_planning_scene
+gripper_action: /tg9801_gripper_controller/gripper_cmd
+gripper_joint: gripper_joint
+closed_position: 0.1
+feedback_timeout: 1.0
+velocity: 0.1
+acceleration: 0.1
+# Approximate payload centered at TCP; measure before carrying a real object.
+payload_size: [0.04, 0.04, 0.08]
+payload_offset: [0.0, 0.0, 0.0]
+touch_links: [gripper_tcp, gripper_palm, gripper_gap_link, left_finger, right_finger]

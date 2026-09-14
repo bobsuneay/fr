@@ -1,0 +1,10 @@
+build/
+install/
+log/
+__pycache__/
+*.pyc
+.pytest_cache/
+config/hardware.local.yaml
+*.bag
+*.db3
+vendor/

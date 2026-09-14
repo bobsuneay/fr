@@ -1,0 +1,2 @@
+Source SHA256: 6f09a14042faa8fb924dd6be495b81958e5f26d604599a1c113d3c72b6a344c1
+robot_ip parameter; isolated manager per arm; 125 Hz ServoJ
