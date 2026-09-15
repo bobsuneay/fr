@@ -9,6 +9,10 @@
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "visibility_control.h"
 #include <vector>
+#include <algorithm>
+#include <cmath>
+#include <chrono>
+#include "feedback_watchdog.hpp"
 #include "libfairino/include/robot.h"
 
 
@@ -20,6 +24,8 @@ namespace fairino_hardware
 class FairinoHardwareInterface: public hardware_interface::SystemInterface{
 public:
   RCLCPP_SHARED_PTR_DEFINITIONS(FairinoHardwareInterface)
+
+  ~FairinoHardwareInterface() override;
 
   FAIRINO_HARDWARE_PUBLIC
   hardware_interface::CallbackReturn on_init(const hardware_interface::HardwareInfo& info) override;
@@ -53,6 +59,11 @@ public:
   hardware_interface::return_type write(const rclcpp::Time & time, const rclcpp::Duration & period) override;
   
 private:
+  bool read_feedback();
+  hardware_interface::return_type fail_stop();
+  void disconnect();
+  FeedbackWatchdog feedback_watchdog_;
+  bool faulted_ = true;
   double _jnt_position_command[6];
   double _jnt_velocity_command[6];
   double _jnt_torque_command[6];

@@ -65,10 +65,12 @@ class Inspection(Node):
         self.status_pub = self.create_publisher(String, '/inspection/status',
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(JointState, '/joint_states', self.on_joints, qos_profile_sensor_data)
-        self.create_subscription(JointState, '/inspection/sim/gripper_states', self.on_joints,
-                                 qos_profile_sensor_data)
+        if self.get_parameter('mode').value != 'real':
+            self.create_subscription(JointState, '/inspection/sim/gripper_states', self.on_joints,
+                                     qos_profile_sensor_data)
         self.create_subscription(PointCloud2, self.cfg['cloud_topic'], self.on_cloud, qos_profile_sensor_data)
-        self.create_subscription(ModelStates, '/inspection/sim/model_states', self.on_models, qos_profile_sensor_data)
+        if self.get_parameter('mode').value != 'real':
+            self.create_subscription(ModelStates, '/inspection/sim/model_states', self.on_models, qos_profile_sensor_data)
         for name in self.cfg['cameras']:
             streams = [('rgb', 'image_raw')]
             if self.cfg['cameras'][name].get('depth', True):
@@ -78,24 +80,39 @@ class Inspection(Node):
                     lambda msg, key=(name, stream): self.on_image(key, msg), qos_profile_sensor_data)
             self.create_subscription(CameraInfo, f'/{name}/camera_info',
                 lambda msg, key=name: self.on_info(key, msg), qos_profile_sensor_data)
-        self.io = IO(self)
+        if self.get_parameter('mode').value == 'real':
+            from .real_io import RealIO
+            self.io = RealIO(self)
+        else:
+            self.io = IO(self)
         self.create_service(Trigger, '/inspection/start', self.start)
         self.create_service(Trigger, '/inspection/retry_pick', self.retry_pick)
         self.create_service(Trigger, '/inspection/skip_to_handover', self.skip_to_handover)
         self.create_service(Trigger, '/inspection/randomize_object', self.randomize_object)
         self.create_service(Trigger, '/inspection/stop', self.stop)
         self.create_service(Trigger, '/inspection/get_status', self.status)
+        self.create_service(Trigger, '/inspection/owner', self.owner_status)
         self.get_logger().info(
             f"Point-cloud pose source: {self.cfg['point_cloud_camera']} ({self.cfg['cloud_topic']}); "
             "waist_camera=RGB-only, wrist cameras=RGB-D")
-        self.publish('IDLE', 'Ready for explicit start; Gazebo assisted grasp only')
+        self.publish('IDLE', 'Ready for explicit start; backend='+self.get_parameter('mode').value)
 
     def on_joints(self, msg):
         if len(msg.name) != len(msg.position) or not np.all(np.isfinite(msg.position)):
             return
+        if self.get_parameter('mode').value == 'real':
+            age = self.get_clock().now().nanoseconds*1e-9-stamp_seconds(msg.header.stamp)
+            if not 0 <= age <= self.cfg['real']['feedback_timeout']:
+                return
         with self.data_lock:
             self.joints.update({feedback_joint_name(n): (q, time.monotonic())
                                 for n, q in zip(msg.name, msg.position)})
+            if self.get_parameter('mode').value == 'real':
+                for side in ('left', 'right'):
+                    name = side+'_left_finger_joint'
+                    if name in msg.name:
+                        # Mechanically linked follower, derived from one encoder; not independent contact evidence.
+                        self.joints[side+'_right_finger_joint'] = self.joints[name]
 
     def set_scan_speed(self, msg):
         value = float(msg.data)
@@ -149,7 +166,7 @@ class Inspection(Node):
 
     def can_handover(self):
         busy = self.worker is not None and self.worker.is_alive()
-        return (self.get_parameter('mode').value == 'gazebo'
+        return (self.get_parameter('mode').value in ('gazebo', 'real')
                 and self.get_parameter('enable_execution').value
                 and self.handover_context is not None
                 and not self.handover_requested.is_set()
@@ -190,15 +207,26 @@ class Inspection(Node):
                     or (not retry and self.phase != 'IDLE')):
                 res.message = 'Retry is available after an initial pick fails/stops, before the object is held'
                 return res
-            if self.get_parameter('mode').value != 'gazebo' or not self.get_parameter('enable_execution').value:
-                res.message = 'Require mode:=gazebo enable_execution:=true; mock is model preview only'
+            if self.get_parameter('mode').value not in ('gazebo', 'real') or not self.get_parameter('enable_execution').value:
+                res.message = 'Require gazebo/real and enable_execution:=true; mock is preview only'
                 return res
+            if retry and self.get_parameter('mode').value == 'real':
+                res.message = 'Real retry requires operator inspection and restart; no automatic release'
+                return res
+            if self.get_parameter('mode').value == 'real':
+                try:
+                    self.io.state()
+                    self.io.object_pose()
+                    self.io.grasp_owner()
+                except RuntimeError as exc:
+                    res.message = 'Real input not ready: '+str(exc)
+                    return res
             self.stop_event.clear()
             self.handover_context = None
             self.handover_requested.clear()
             previous = str(self.output) if self.output else None
             self.output = None
-            self.report = {'backend': 'gazebo_assisted', 'events': [], 'views': [],
+            self.report = {'backend': self.get_parameter('mode').value, 'events': [], 'views': [],
                            'retry_of': previous if retry else None}
             self.publish('RETRY_STARTING' if retry else 'STARTING',
                          'Preparing failed-pick recovery' if retry else 'Checking feedback, cameras and point cloud')
@@ -270,16 +298,27 @@ class Inspection(Node):
         with self.run_lock:
             busy = self.worker is not None and self.worker.is_alive()
             event = dict(self.report['events'][-1])
-            enabled = (self.get_parameter('mode').value == 'gazebo'
+            enabled = (self.get_parameter('mode').value in ('gazebo', 'real')
                        and self.get_parameter('enable_execution').value)
             event.update(busy=busy, can_start=bool(enabled and not busy and self.phase == 'IDLE'),
                          scan_speed_scale=self.scan_speed_scale,
                          can_handover=bool(self.can_handover()),
-                         can_retry=bool(enabled and not busy and not self.pick_secured
+                         can_retry=bool(self.get_parameter('mode').value == 'gazebo' and enabled and not busy and not self.pick_secured
                                         and self.phase in ('FAILED', 'STOPPED')),
                          can_randomize=bool(self.get_parameter('mode').value == 'gazebo'
                                             and not busy and not self.pick_secured))
         res.success, res.message = True, json.dumps(event, ensure_ascii=False)
+        return res
+
+    def owner_status(self, req, res):
+        if self.get_parameter('mode').value == 'real':
+            try:
+                res.message = self.io.grasp_owner()
+                res.success = True
+            except RuntimeError as exc:
+                res.message = str(exc)
+        else:
+            res.message = 'Use /inspection/sim/owner for simulator ownership'
         return res
 
     def settle(self):
@@ -293,6 +332,30 @@ class Inspection(Node):
             self.stop_event.wait(.05)
 
     def perceive(self):
+        if self.get_parameter('mode').value == 'real':
+            # The external tracker supplies a full observed pose; never infer held pose from robot commands.
+            from types import SimpleNamespace
+            deadline = time.monotonic()+self.cfg['cloud_timeout']
+            estimates, last = [], None
+            while time.monotonic() < deadline:
+                self.io.check()
+                try:
+                    value = self.io.object_pose()
+                    with self.data_lock:
+                        stamp = self.io.observation[1]
+                    if stamp != last:
+                        last = stamp
+                        if estimates and (np.linalg.norm(value[:3, 3]-estimates[-1][:3, 3]) > .002 or
+                                Rotation.from_matrix(value[:3, :3].T@estimates[-1][:3, :3]).magnitude() > .05):
+                            estimates.clear()
+                        estimates.append(value)
+                        if len(estimates) >= 3:
+                            self.io.monitoring = True
+                            return SimpleNamespace(pose=value)
+                except RuntimeError:
+                    estimates.clear()
+                self.stop_event.wait(.05)
+            raise RuntimeError('Real object tracker did not provide three stable fresh poses')
         deadline = time.monotonic()+self.cfg['cloud_timeout']
         last, error = None, 'No cloud received'
         estimates = []
@@ -551,6 +614,9 @@ class Inspection(Node):
                 return result
             except Exception as exc:
                 if self.stop_event.is_set():
+                    raise
+                if self.get_parameter('mode').value == 'real':
+                    # An execution failure is not evidence of an empty physical grasp.
                     raise
                 # An error after acquisition can be a scene/planning/execution
                 # failure. It is not proof of an empty grasp. Also query owner

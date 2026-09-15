@@ -1,0 +1,15 @@
+name: Humble build and offline regression
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  humble:
+    runs-on: ubuntu-22.04
+    container: ros:humble-ros-base-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies and build
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y python3-colcon-common-extensions python3-rosdep python3-pytest
+          rosdep update
+          bash scripts/build_humble.sh

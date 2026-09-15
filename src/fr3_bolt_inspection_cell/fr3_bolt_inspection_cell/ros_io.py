@@ -58,14 +58,22 @@ class IO:
         self.n, self.c = node, node.cfg
         self.move = ActionClient(node, MoveGroup, '/move_action')
         self.execute_client = ActionClient(node, ExecuteTrajectory, '/execute_trajectory')
-        self.fingers = {s: ActionClient(node, FollowJointTrajectory,
+        self.fingers = ({s: ActionClient(node, FollowJointTrajectory,
             f'/{s}_gripper_controller/follow_joint_trajectory') for s in ('left', 'right')}
+            if node.get_parameter('mode').value != 'real' else {})
         self.cart = node.create_client(GetCartesianPath, '/compute_cartesian_path')
         self.fk = node.create_client(GetPositionFK, '/compute_fk')
         self.ik = node.create_client(GetPositionIK, '/compute_ik')
         self.validity = node.create_client(GetStateValidity, '/check_state_validity')
         self.apply = node.create_client(ApplyPlanningScene, '/apply_planning_scene')
         self.scene = node.create_client(GetPlanningScene, '/get_planning_scene')
+        if node.get_parameter('mode').value != 'real':
+            self._simulation_clients(node)
+        self.active = None
+        self.watch_center = None
+        self.goal_lock = threading.Lock()
+
+    def _simulation_clients(self, node):
         self.entity = node.create_client(GetEntityState, '/inspection/sim/get_entity_state')
         self.set_entity = node.create_client(SetEntityState, '/inspection/sim/set_entity_state')
         # gazebo_ros_api_plugin exposes the same services globally on some
@@ -76,9 +84,6 @@ class IO:
         self.owner = node.create_client(Trigger, '/inspection/sim/owner')
         self.grasps = {s: node.create_client(SetBool, '/inspection/sim/'+s+'_grasp')
                        for s in ('left', 'right')}
-        self.active = None
-        self.watch_center = None
-        self.goal_lock = threading.Lock()
 
     def check(self):
         if self.n.stop_event.is_set() or not rclpy.ok():

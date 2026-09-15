@@ -1,5 +1,8 @@
 # 双臂实机接入
 
+本文件保留上游分离驱动工作区的历史流程。**本集成仓库请优先执行根目录 DEPLOYMENT.md**，
+直接构建已修订的 src 驱动；不要重新运行 prepare_driver 覆盖或用旧 underlay 遮蔽本版驱动。
+
 以下流程是现场操作文档。本次没有连接任何机器人，没有发送机械臂或夹爪运动指令。
 
 ## 1. 驱动版本与网络
@@ -100,7 +103,7 @@ ros2 topic echo /joint_states --once
 FR3 插件只导出六个 position 关节；每个 HKV 插件只导出对应的
 `left_gripper_joint` 或 `right_gripper_joint`，并提供 position/velocity 状态。
 真机夹爪控制器是 `position_controllers/GripperActionController`，action 地址为
-`/<side>_gripper_controller/command`；不要向真机发送仿真双指轨迹的四个 finger joint。
+`/<side>_gripper_controller/gripper_cmd`；不要向真机发送仿真双指轨迹的四个 finger joint。
 将 RViz 当前姿态与实物逐轴比对，确认左右连接与关节方向正确。
 `check_feedback` 只检查 ROS 层新鲜、有限、重复的消息，不保证 SDK 未缓存旧数据，也不验证控制柜安全状态。
 

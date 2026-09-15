@@ -83,7 +83,11 @@ def test_ros2_control_boundary_is_standalone_xacro():
     assert 'mock_components/GenericSystem' in fragment
     assert '<plugin>$(arg arm_plugin)</plugin>' in fragment
     assert '<plugin>$(arg gripper_plugin)</plugin>' in fragment
-    assert 'fairino_hardware/FairinoHardwareInterface' not in fragment
+    # Real IP parameters are conditional; default expanded plugins remain mock.
+    import xacro
+    expanded = ET.fromstring(xacro.process_file(str(SHARE/'urdf/my_robot.ros2_control.xacro')).toxml())
+    assert all(s.find('hardware/plugin').text == 'mock_components/GenericSystem'
+               for s in expanded.findall('ros2_control'))
 
 
 def test_real_manager_separation(arms, hardware):
@@ -111,7 +115,7 @@ def test_moveit_has_both_arms_and_preserves_interarm_collisions(arms):
     for name in mapping['controller_names']:
         assert name in controllers('gazebo')
         assert name in controllers('real', name.split('_')[0])
-    assert len(config['robot_description_planning']['joint_limits']) == 16
+    assert len(config['robot_description_planning']['joint_limits']) == 14  # 12 axes + 2 actuated grippers; mimics excluded
 
 
 def test_gripper_width_mapping_and_physical_gap(arms):

@@ -87,7 +87,7 @@ ros2 run fr3_dual_bolt_cell gripper --arm right --width 0.010
 ```
 
 `--width` 是内侧净开口，单位米；默认范围 0～30 mm。所有后端都使用同一个
-单关节 `GripperCommand`，目标直接发送到 `/<side>_gripper_controller/command`。
+单关节 `GripperCommand`，目标直接发送到 `/<side>_gripper_controller/gripper_cmd`。
 real 后端再由 `ros2_hkv_gripper/GripperHardwareInterface` 转换为现场配置的寄存器/力参数。
 例如：
 
@@ -127,7 +127,7 @@ RViz 的规划组：`left_arm`、`right_arm`、`both_arms`、`left_gripper`、`r
 | --- | --- |
 | `/left_arm_controller/follow_joint_trajectory` | 左臂六轴轨迹 action |
 | `/right_arm_controller/follow_joint_trajectory` | 右臂六轴轨迹 action |
-| `/left_gripper_controller/command`、`/right_gripper_controller/command` | 所有后端统一的 GripperCommand action |
+| `/left_gripper_controller/gripper_cmd`、`/right_gripper_controller/gripper_cmd` | 所有后端统一的 GripperCommand action |
 | `/joint_states` | 两个互不重名的关节子集，合计 12 个臂关节和 2 个夹爪主关节 |
 | `/left/gripper_registers`、`/right/gripper_registers` | 实机 HKV 插件寄存器反馈 |
 | `/head_camera/image_raw`、`/head_camera/points` | 仅 Gazebo 自动提供；实机需另接真实 RGB-D 驱动与标定 |

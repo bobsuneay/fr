@@ -44,6 +44,6 @@ def gripper_text(side, joints, owner):
     values = [joints.get(f'{side}_{finger}_finger_joint') for finger in ('left', 'right')]
     positions = ['--' if v is None else f'{1000*v:.2f}' for v in values]
     gap = '--' if any(v is None for v in values) else f'{1000*sum(values):.2f}'
-    holding = '未知/反馈过期' if owner is None else ('夹持中（仿真辅助）' if owner == side else '未夹持')
+    holding = '未知/反馈过期' if owner is None else ('夹持中（后端已确认）' if owner == side else '未夹持')
     return (f'左指：{positions[0]} mm    右指：{positions[1]} mm\n'
             f'开口宽度：{gap} mm\n夹持反馈：{holding}')

@@ -1,0 +1,28 @@
+# Replace measured values; placeholders are not commissioned measurements.
+calibrated: false
+object_pose_topic: /inspection/real/object_pose
+feedback_timeout: 0.5
+contact_seconds: 0.3
+max_position_std: 0.002
+max_rotation_std: 0.05
+opening_tolerance: 0.0005
+gripper_timeout: 10.0
+topic_remappings: {}  # Logical camera topics -> real camera driver topics
+left:
+  finger_open: 0.0175
+  finger_closed: 0.0
+  finger1_zero: [0, 0, 0]
+  finger2_zero: [0, 0, 0]
+  contact_min: 0   # REQUIRED: raw register norm after zero subtraction, NOT newtons
+  contact_max: 0   # REQUIRED: maximum acceptable norm
+  held_gap_min: 0.008
+  held_gap_max: 0.022
+right:
+  finger_open: 0.0175
+  finger_closed: 0.0
+  finger1_zero: [0, 0, 0]
+  finger2_zero: [0, 0, 0]
+  contact_min: 0
+  contact_max: 0
+  held_gap_min: 0.008
+  held_gap_max: 0.022

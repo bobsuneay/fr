@@ -8,3 +8,7 @@ config/hardware.local.yaml
 *.bag
 *.db3
 vendor/
+.venv/
+*.exe
+*.zip
+config/local/

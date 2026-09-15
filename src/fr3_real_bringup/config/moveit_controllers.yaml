@@ -9,6 +9,6 @@ moveit_simple_controller_manager:
     joints: [j1, j2, j3, j4, j5, j6]
   tg9801_gripper_controller:
     type: GripperCommand
-    action_ns: command
+    action_ns: gripper_cmd
     default: false
     joints: [gripper_joint]

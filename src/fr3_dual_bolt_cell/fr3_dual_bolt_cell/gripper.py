@@ -35,7 +35,7 @@ def main():
     rclpy.init()
     node = Node('dual_cell_gripper_client')
     client = ActionClient(node, GripperCommand,
-                          '/'+opts.arm+'_gripper_controller/command')
+                          '/'+opts.arm+'_gripper_controller/gripper_cmd')
     try:
         if not client.wait_for_server(timeout_sec=10):
             raise RuntimeError('Gripper action unavailable; check active controller')

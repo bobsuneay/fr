@@ -131,7 +131,7 @@ void DefaultDriver::grip(uint8_t position, uint8_t speed, uint8_t force)
     throw std::runtime_error("Cannot grip: not connected");
   }
 
-  (void)force;  // 目标力寄存器暂时屏蔽，入参仅为接口兼容
+  const uint16_t force_reg = static_cast<uint16_t>(std::lround(1.0+99.0*force/255.0));
 
   // 寄存器映射：速度(0x000F)、位置(0x0010)，目标力寄存器暂时不写
   const uint16_t speed_reg = mapSpeedByteToRegister(speed);
@@ -139,6 +139,9 @@ void DefaultDriver::grip(uint8_t position, uint8_t speed, uint8_t force)
 
   // 首次下发时切换位置模式，并在帧间回读校验（仅一次）
   if (!position_mode_set_) {
+    if (!writeSingleWithReadback(kTargetForceRegister, force_reg)) {
+      throw std::runtime_error("Failed to set target force register");
+    }
     if (!writeSingleWithReadback(kControlModeRegister, kControlModePosition)) {
       throw std::runtime_error("Failed to set control mode with verification");
     }
@@ -150,7 +153,9 @@ void DefaultDriver::grip(uint8_t position, uint8_t speed, uint8_t force)
   // 导致严格的回读对比（期望读到的值与写入的指令值完全一致）很容易失败。
   // 因此，这里只下发指令而不强制要求回读匹配，失败时不抛出异常。
   std::vector<uint16_t> values = {speed_reg, position_reg};
-  writeMultipleWithReadback(kPositionModeSpeedRegister, values);
+  if (!writeMultipleWithReadback(kPositionModeSpeedRegister, values)) {
+    throw std::runtime_error("Position command was not verified");
+  }
 }
 
 FingerState DefaultDriver::readFingerState()
@@ -316,12 +321,18 @@ bool DefaultDriver::writeMultipleWithReadback(uint16_t start_addr, const std::ve
   for (int attempt = 0; attempt < max_retries; ++attempt) {
     auto write_frame = modbus_utils::buildWriteMultipleRegistersFrame(slave_id_, start_addr, values);
     auto write_response = writeAndRead(write_frame, 8);
-    if (write_response.size() != 8 || !modbus_utils::verifyCRC(write_response)) {
+    if (write_response.size() != 8 || !modbus_utils::verifyCRC(write_response) ||
+        !std::equal(write_response.begin(), write_response.begin()+6, write_frame.begin())) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
       continue;
     }
 
     auto read_frame = modbus_utils::buildReadRegistersFrame(slave_id_, start_addr, static_cast<uint16_t>(values.size()));
+    // A moving position target need not read back identically. Verify the Modbus
+    // write acknowledgement (slave, function, start, count); read measured state separately.
+    if (start_addr == kPositionModeSpeedRegister) {
+      return std::equal(write_response.begin(), write_response.begin()+6, write_frame.begin());
+    }
     auto read_response = writeAndRead(read_frame, 5 + 2 * values.size());
     if (read_response.empty() || !modbus_utils::verifyCRC(read_response)) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -383,12 +394,14 @@ std::vector<uint8_t> DefaultDriver::writeAndRead(
 {
   std::lock_guard<std::recursive_mutex> lock(serial_mutex_);
   
+  // Discard old bytes BEFORE transmission. Flushing after write can discard the
+  // outgoing request or a fast device acknowledgement (DefaultSerial uses TCIOFLUSH).
+  serial_->flush();
   size_t written = serial_->write(frame);
   if (written != frame.size()) {
     return {};
   }
   
-  serial_->flush();
   
   // Wait for device to process
   std::this_thread::sleep_for(kResponseDelay);
@@ -407,7 +420,9 @@ std::vector<uint8_t> DefaultDriver::writeAndRead(
     return {};
   }
   
-  return serial_->read(expected_response_size);
+  auto response = serial_->read(expected_response_size);
+  if (response.size() != expected_response_size || response[0] != frame[0] || response[1] != frame[1]) return {};
+  return response;
 }
 
 }  // namespace hkv_gripper_controller

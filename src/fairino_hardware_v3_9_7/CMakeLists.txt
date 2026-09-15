@@ -121,6 +121,9 @@ SYMBOLIC)
 
 
 if(BUILD_TESTING)
+  add_executable(test_feedback_watchdog test/test_feedback_watchdog.cpp)
+  target_include_directories(test_feedback_watchdog PRIVATE include)
+  add_test(NAME feedback_watchdog COMMAND test_feedback_watchdog)
   find_package(ament_lint_auto REQUIRED)
   find_package(ament_cmake_gmock REQUIRED)
   find_package(hardware_interface REQUIRED)

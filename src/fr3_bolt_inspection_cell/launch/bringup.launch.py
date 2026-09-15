@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import xml.etree.ElementTree as ET
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory, get_packages_with_prefixes
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, EmitEvent, IncludeLaunchDescription,
                             LogInfo, OpaqueFunction, RegisterEventHandler, SetEnvironmentVariable)
@@ -17,20 +17,23 @@ from launch_ros.parameter_descriptions import ParameterValue
 import yaml
 
 from fr3_dual_bolt_cell.model import (SIDES, build_model, manager_model,
-    moveit_config, read_yaml)
+    moveit_config, read_yaml, validate_hardware)
 from fr3_dual_bolt_cell.world import load_scene, world_xml
 from fr3_bolt_inspection_cell.model import augment, inspection_world
 from fr3_bolt_inspection_cell.model import linked_controllers as controllers
 from fr3_bolt_inspection_cell.core import validate
 from fr3_bolt_inspection_cell.geometry import fingertip_geometry
+from fr3_bolt_inspection_cell.real_model import configure_real_model, real_controllers
+from fr3_bolt_inspection_cell.real_contract import validate_real
+from fr3_dual_bolt_cell.hardware_lease import HardwareLease
 
 
 def start(context):
     share = Path(get_package_share_directory('fr3_dual_bolt_cell'))
     arg = lambda name: LaunchConfiguration(name).perform(context)
     mode = arg('mode')
-    if mode not in ('gazebo', 'mock'):
-        raise ValueError('Inspection supports gazebo/mock only; real grasp/feedback needs commissioning')
+    if mode not in ('gazebo', 'mock', 'real'):
+        raise ValueError('Require gazebo/mock/real')
     for name in ('enable_execution', 'rviz', 'gui', 'panel'):
         if arg(name) not in ('true', 'false'):
             raise ValueError(f'{name} must be true or false')
@@ -50,11 +53,35 @@ def start(context):
         if abs(scene['bolts'][key]-expected) > 1e-9:
             raise ValueError('Scene bolt dimensions differ from inspection calibration')
     hardware = None
+    lease = None
+    if mode == 'real':
+        cfg['real'] = validate_real(read_yaml(Path(arg('real_feedback')).expanduser()))
+        hardware = validate_hardware(read_yaml(Path(arg('hardware')).expanduser()))
+        selected = hardware['driver_package']
+        exporters = [p for p in get_packages_with_prefixes() if p.startswith('fairino_hardware') and
+            any('fairino_hardware/FairinoHardwareInterface' in f.read_text() for f in
+                Path(get_package_share_directory(p)).rglob('*.xml'))]
+        if exporters != [selected]:
+            raise RuntimeError('Source exactly one matching driver: '+str(exporters))
+        if not (Path(get_package_share_directory(selected))/'dual_cell_adapter_v1.txt').is_file():
+            raise RuntimeError('The included dual-arm driver adapter must be built')
+        for side in SIDES:
+            if not Path(hardware[side]['serial_port']).exists():
+                raise ValueError('Missing serial device: '+side)
+            if abs(cfg['open_width']/2-cfg['real'][side]['finger_open']) > cfg['real']['opening_tolerance']:
+                raise ValueError('inspection.open_width must match measured open endpoint')
+            if cfg['close_width']/2 < cfg['real'][side]['finger_closed']:
+                raise ValueError('Requested closure outside measured range')
+        if Path(hardware['left']['serial_port']).resolve() == Path(hardware['right']['serial_port']).resolve():
+            raise ValueError('Left and right serial paths resolve to the same device')
+        lease = HardwareLease(hardware)
     temp = tempfile.TemporaryDirectory(prefix='fr3_bolt_inspection_cell_')
     run = Path(temp.name)
     combined = run/'gazebo_controllers.yaml'
     combined.write_text(yaml.safe_dump(controllers('gazebo')), encoding='utf-8')
     root = augment(build_model(share, scene_path, arms, mode, combined, hardware), cfg, sim)
+    if mode == 'real':
+        configure_real_model(root, cfg)
     for mesh in root.iter('mesh'):
         uri = mesh.get('filename')
         if not uri.startswith('package://fr3_dual_bolt_cell/'):
@@ -87,7 +114,8 @@ def start(context):
                 elif joint.get('name') == side+'_gripper_joint':
                     joint.set('name', master)
         mapping = moveit['moveit_simple_controller_manager'][side+'_gripper_controller']
-        mapping.update(type='FollowJointTrajectory', action_ns='follow_joint_trajectory', joints=[master])
+        mapping.update(type='GripperCommand' if mode == 'real' else 'FollowJointTrajectory',
+                       action_ns='gripper_cmd' if mode == 'real' else 'follow_joint_trajectory', joints=[master])
     moveit['robot_description_semantic'] = ET.tostring(semantic, encoding='unicode')
     moveit['robot_description_semantic'] = ParameterValue(moveit['robot_description_semantic'], value_type=str)
     rsp = Node(package='robot_state_publisher', executable='robot_state_publisher',
@@ -106,12 +134,14 @@ def start(context):
     task_config = run/'inspection.yaml'
     task_config.write_text(yaml.safe_dump(task_cfg), encoding='utf-8')
     task = Node(package='fr3_bolt_inspection_cell', executable='inspection_task',
+                remappings=list(cfg.get('real', {}).get('topic_remappings', {}).items()),
                 parameters=[{'config_file': str(task_config), 'arms_file': arg('arms'),
                              'fingertip_geometry_file': str(geometry_file),
                              'mode': mode, 'enable_execution': execute, 'use_sim_time': sim}],
                 output='screen')
     panel = Node(package='fr3_bolt_inspection_cell', executable='inspection_panel',
-                 parameters=[{'use_sim_time': sim}], output='screen',
+                 remappings=list(cfg.get('real', {}).get('topic_remappings', {}).items()),
+                 parameters=[{'use_sim_time': sim, 'mode': mode}], output='screen',
                  condition=IfCondition(LaunchConfiguration('panel')))
 
     def success(actions, stage):
@@ -121,15 +151,18 @@ def start(context):
             return actions
         return callback
 
-    handlers = [RegisterEventHandler(OnShutdown(on_shutdown=lambda event, context: temp.cleanup()))]
-    processes = [rsp, group]
+    def cleanup(event, context):
+        temp.cleanup()
+        # HardwareLease is released at process exit, after managers disconnect.
+    handlers = [RegisterEventHandler(OnShutdown(on_shutdown=cleanup))]
+    processes = [rsp, group, task]
     startup = [rsp]
     spawners = []
     for side in SIDES:
         manager_name = 'controller_manager' if sim else side+'_controller_manager'
         if not sim:
             file = run/(side+'_controllers.yaml')
-            file.write_text(yaml.safe_dump(controllers(mode, side)), encoding='utf-8')
+            file.write_text(yaml.safe_dump(real_controllers(side) if mode == 'real' else controllers(mode, side)), encoding='utf-8')
             manager = Node(package='controller_manager', executable='ros2_control_node',
                 # Scoped rename avoids renaming the HKV plugin's internal node.
                 arguments=['--ros-args', '-r', f'controller_manager:__node:={manager_name}'],
@@ -168,14 +201,16 @@ def start(context):
         startup += [SetEnvironmentVariable('GAZEBO_MODEL_DATABASE_URI', ''), gazebo, spawn]
     else:
         startup.append(spawners[0])
-    warning = 'Inspection: assisted Gazebo grasp; start explicitly via /inspection/start.'
+    warning = f'Inspection backend={mode}; explicit /inspection/start. Real launch may send holding commands.'
     return handlers + [LogInfo(msg=warning), LogInfo(msg='Generated model/config: '+str(run))] + startup
 
 
 def generate_launch_description():
     share = Path(get_package_share_directory('fr3_bolt_inspection_cell'))
     return LaunchDescription([
-        DeclareLaunchArgument('mode', default_value='gazebo', choices=['gazebo', 'mock']),
+        DeclareLaunchArgument('mode', default_value='gazebo', choices=['gazebo', 'mock', 'real']),
+        DeclareLaunchArgument('hardware', default_value=''),
+        DeclareLaunchArgument('real_feedback', default_value=str(share/'config/real_feedback.example.yaml')),
         DeclareLaunchArgument('enable_execution', default_value='false'),
         DeclareLaunchArgument('rviz', default_value='true'),
         DeclareLaunchArgument('gui', default_value='true'),

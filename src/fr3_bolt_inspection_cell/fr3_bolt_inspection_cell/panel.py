@@ -20,6 +20,8 @@ from .preview import PreviewState
 def main():
     rclpy.init()
     node = Node('inspection_panel')
+    node.declare_parameter('mode', 'gazebo')
+    real = node.get_parameter('mode').value == 'real'
     speed_pub = node.create_publisher(Float64, '/inspection/scan_speed_scale', 10)
     messages = queue.Queue(maxsize=20)
     lock = threading.Lock()
@@ -52,6 +54,11 @@ def main():
     def joints(msg):
         with lock:
             feedback.receive(msg, time.monotonic())
+            if real:
+                for side in ('left', 'right'):
+                    master = side+'_left_finger_joint'
+                    if master in msg.name and master in feedback.joints:
+                        feedback.joints[side+'_right_finger_joint'] = feedback.joints[master]
 
     node.create_subscription(JointState, '/joint_states', joints, qos_profile_sensor_data)
     node.create_subscription(JointState, '/inspection/sim/gripper_states', joints,
@@ -64,7 +71,7 @@ def main():
         ('randomize', '/inspection/randomize_object'),
         ('handover', '/inspection/skip_to_handover'),
         ('stop', '/inspection/stop'), ('status', '/inspection/get_status'),
-        ('owner', '/inspection/sim/owner'))}
+        ('owner', '/inspection/owner' if real else '/inspection/sim/owner'))}
     requests = {}
 
     def request(name):

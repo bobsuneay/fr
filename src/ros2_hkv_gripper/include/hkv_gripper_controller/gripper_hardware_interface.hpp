@@ -6,6 +6,8 @@
 #include <atomic>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -100,6 +102,11 @@ protected:
   // Model identifier (e.g., TG-9801) for future multi-model support
   std::string gripper_model_ = "TG-9801";
   double gripper_closed_pos_ = 0.0;
+  double joint_open_ = 0.0;
+  double joint_closed_ = 0.1;
+  double feedback_timeout_ = 0.5;
+  std::chrono::steady_clock::time_point last_feedback_{};
+  std::chrono::steady_clock::time_point last_read_{};
   double gripper_max_speed_ = 0.0;
   double gripper_max_force_ = 0.0;
 
@@ -116,6 +123,7 @@ protected:
 
   // Atomic variables for thread-safe communication
   std::atomic<uint8_t> write_command_;
+  std::atomic<bool> write_fault_{false};
   std::atomic<uint8_t> write_force_;
   std::atomic<uint8_t> write_speed_;
   std::atomic<uint8_t> gripper_current_state_;

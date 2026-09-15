@@ -152,7 +152,7 @@ RViz Stop、Ctrl+C、杀进程和断网都不是急停。
 
 当前包已经将 HKV 接入 MoveIt：规划组 `gripper` 只有 `gripper_joint`，
 控制器是 Humble 的 `position_controllers/GripperActionController`，MoveIt action 为
-`tg9801_gripper_controller/command`，类型是 `control_msgs/action/GripperCommand`。
+`tg9801_gripper_controller/gripper_cmd`，类型是 `control_msgs/action/GripperCommand`。
 夹爪不是 FR3 的第七轴；一个 controller_manager 中同时加载 FR3 和 HKV 两个硬件组件。
 
 先确认夹爪串口、波特率、从站地址、开合方向、激活行为、实际行程和反馈换算：

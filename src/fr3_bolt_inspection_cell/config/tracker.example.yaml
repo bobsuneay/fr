@@ -1,0 +1,13 @@
+aruco_object_tracker:
+  ros__parameters:
+    calibrated: false
+    image_topic: /waist_camera/image_raw
+    info_topic: /waist_camera/camera_info
+    output_topic: /inspection/real/object_pose
+    marker_id: 0
+    marker_size: 0.03
+    marker_to_object_xyz: [0.0, 0.0, 0.0]
+    marker_to_object_rpy: [0.0, 0.0, 0.0]
+    max_reprojection_px: 1.0
+    position_std: 0.002
+    rotation_std: 0.04

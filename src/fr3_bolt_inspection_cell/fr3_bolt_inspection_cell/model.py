@@ -221,17 +221,18 @@ def augment(root, cfg, sim):
         # emits a duplicate-parameter error. Both arms use the same GazeboSystem,
         # so expose all 16 joints through one hardware block.
         systems = root.findall('ros2_control')
-        if len(systems) != 2:
-            raise ValueError('Expected one Gazebo ros2_control system per arm')
+        if not systems or any(s.find('hardware/plugin').text != 'gazebo_ros2_control/GazeboSystem' for s in systems):
+            raise ValueError('Expected only Gazebo hardware components')
         combined = systems[0]
         combined.set('name', 'inspection_gazebo_system')
         hardware = combined.find('hardware')
         hardware.find('plugin').text = 'fr3_bolt_inspection_cell/ContactSystem'
         for key in ('finger_max_force', 'finger_max_speed'):
             element(hardware, 'param', name=key).text = str(cfg[key])
-        for joint in systems[1].findall('joint'):
-            combined.append(joint)
-        root.remove(systems[1])
+        for system in systems[1:]:
+            for joint in system.findall('joint'):
+                combined.append(joint)
+            root.remove(system)
     return root
 
 

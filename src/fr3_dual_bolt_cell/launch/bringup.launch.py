@@ -19,6 +19,7 @@ import yaml
 from fr3_dual_bolt_cell.model import (SIDES, build_model, controllers, manager_model,
     moveit_config, read_yaml, validate_hardware)
 from fr3_dual_bolt_cell.world import load_scene, world_xml
+from fr3_dual_bolt_cell.hardware_lease import HardwareLease
 
 
 def start(context):
@@ -36,6 +37,7 @@ def start(context):
     scene = load_scene(scene_path)
     arms = read_yaml(Path(arg('arms')).expanduser())
     hardware = None
+    lease = None
     if mode == 'real':
         hardware = validate_hardware(read_yaml(Path(arg('hardware')).expanduser()))
         selected = hardware['driver_package']
@@ -58,6 +60,7 @@ def start(context):
                 raise ValueError(f'{side} serial device does not exist')
         if Path(hardware['left']['serial_port']).resolve() == Path(hardware['right']['serial_port']).resolve():
             raise ValueError('Both serial names resolve to the same device')
+        lease = HardwareLease(hardware)
 
     temp = tempfile.TemporaryDirectory(prefix='fr3_dual_bolt_cell_')
     run = Path(temp.name)
@@ -100,7 +103,10 @@ def start(context):
             return actions
         return callback
 
-    handlers = [RegisterEventHandler(OnShutdown(on_shutdown=lambda event, context: temp.cleanup()))]
+    def cleanup(event, context):
+        temp.cleanup()
+        # HardwareLease is released at process exit, after managers disconnect.
+    handlers = [RegisterEventHandler(OnShutdown(on_shutdown=cleanup))]
     processes = [rsp, group]
     startup = [rsp]
     spawners = []

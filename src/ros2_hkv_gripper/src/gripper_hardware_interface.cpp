@@ -79,6 +79,17 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_init(
     gripper_closed_pos_ = 0.1;  // Default closed position in meters (0=open,0.1=closed)
   }
 
+  joint_closed_ = gripper_closed_pos_;
+  auto endpoint = info_.hardware_parameters.find("joint_position_open");
+  if (endpoint != info_.hardware_parameters.end()) joint_open_ = std::stod(endpoint->second);
+  endpoint = info_.hardware_parameters.find("joint_position_closed");
+  if (endpoint != info_.hardware_parameters.end()) joint_closed_ = std::stod(endpoint->second);
+  endpoint = info_.hardware_parameters.find("feedback_timeout");
+  if (endpoint != info_.hardware_parameters.end()) feedback_timeout_ = std::stod(endpoint->second);
+  if (!std::isfinite(joint_open_) || !std::isfinite(joint_closed_) ||
+      std::abs(joint_open_-joint_closed_) < 1e-6 || !std::isfinite(feedback_timeout_) || feedback_timeout_ <= 0) {
+    return hardware_interface::CallbackReturn::ERROR;
+  }
   // Register parameters from EG-9801
   it = info_.hardware_parameters.find("position_open_register");
   position_open_register_ = (it != info_.hardware_parameters.end())
@@ -91,9 +102,9 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_init(
       : kDefaultClosedRegister;
 
   // Clamp to valid ranges (open >= closed)
-  if (position_open_register_ < position_closed_register_)
+  if (position_open_register_ <= position_closed_register_)
   {
-    std::swap(position_open_register_, position_closed_register_);
+    return hardware_interface::CallbackReturn::ERROR;
   }
 
   it = info_.hardware_parameters.find("position_mode_speed_register");
@@ -114,7 +125,10 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_init(
   {
     int keepalive = std::stoi(it->second);
     if (keepalive < 0) keepalive = 0;
-    command_keepalive_ = std::chrono::milliseconds(keepalive);
+    if (keepalive != 0) {
+      RCLCPP_ERROR(kLogger, "Keepalive is disabled; command updates have one writer");
+      return hardware_interface::CallbackReturn::ERROR;
+    }
   }
 
   // Precompute fixed speed/force bytes for driver mapping
@@ -292,15 +306,18 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_activate(
   // Activate gripper
   try
   {
-    driver_->deactivate();
-    driver_->activate();
+    // Preserve the physical holding state. Activation must not send release/reset.
 
     // 启动前先读取一次当前寄存器位置，避免初始化时发生移动
     try {
       auto state = driver_->readFingerState();
+      if (!state.is_valid) throw std::runtime_error("Initial register read invalid");
+      if (state.position_register < position_closed_register_ || state.position_register > position_open_register_)
+        throw std::runtime_error("Initial position outside calibrated register range");
       {
         std::lock_guard<std::mutex> lock(registers_mutex_);
         latest_registers_ = state;
+        last_feedback_ = std::chrono::steady_clock::now();
       }
       // 将当前实际位置同步到命令值，防止初始化写入造成移动
       const double range = static_cast<double>(position_open_register_ - position_closed_register_);
@@ -309,7 +326,9 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_activate(
         normalized_closed = static_cast<double>(position_open_register_ - state.position_register) / range;
       }
       normalized_closed = std::clamp(normalized_closed, 0.0, 1.0);
-      gripper_position_ = gripper_closed_pos_ * normalized_closed;
+      gripper_position_ = joint_open_ + (joint_closed_-joint_open_) * normalized_closed;
+      gripper_velocity_ = 0.0;
+      last_read_ = std::chrono::steady_clock::now();
       
       gripper_position_command_ = gripper_position_;
       last_command_position_ = gripper_position_;
@@ -319,23 +338,22 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_activate(
       write_command_.store(cmd);
       last_written_command_ = cmd;
     } catch (const std::exception& e) {
-      RCLCPP_WARN(kLogger, "Failed to sync initial position: %s", e.what());
-      suppress_writes_until_command_change_ = true;
+      RCLCPP_ERROR(kLogger, "Failed to sync initial position: %s", e.what());
+      return hardware_interface::CallbackReturn::ERROR;
     }
 
-    // Start background communication thread
+    last_write_time_ = std::chrono::steady_clock::now();
+    write_fault_.store(false);
+    // One worker owns serial I/O; never block the arm's controller_manager in write().
     communication_thread_is_running_.store(true);
     communication_thread_ = std::thread([this] { this->background_task(); });
 
     // 启动 100Hz 寄存器数据发布定时器
-    registers_timer_ = node_->create_wall_timer(
-        std::chrono::milliseconds(10),  // 100Hz
-        std::bind(&GripperHardwareInterface::publishRegisters, this));
+    // Only the successful hardware polling path publishes fresh register samples.
 
     // 初始化命令节流缓存
     last_written_speed_ = write_speed_.load();
     last_written_force_ = write_force_.load();
-    last_write_time_ = std::chrono::steady_clock::now();
   }
   catch (const std::exception& e)
   {
@@ -367,7 +385,7 @@ hardware_interface::CallbackReturn GripperHardwareInterface::on_deactivate(
 
   try
   {
-    driver_->deactivate();
+    driver_->disconnect();  // No automatic jaw release on ROS shutdown.
   }
   catch (const std::exception& e)
   {
@@ -384,10 +402,17 @@ hardware_interface::return_type GripperHardwareInterface::read(
 {
   // 从缓存读取位置数据，基于寄存器 0x0008 的实时值
   // position_register 范围：0~100，映射到关节位置 0~gripper_closed_pos_ 米（默认 0.1m）
+  if (write_fault_.load()) return hardware_interface::return_type::ERROR;
   uint16_t position_register = 0;
   {
     std::lock_guard<std::mutex> lock(registers_mutex_);
     position_register = latest_registers_.position_register;
+    if (position_register < position_closed_register_ || position_register > position_open_register_)
+      return hardware_interface::return_type::ERROR;
+    if (!latest_registers_.is_valid || std::chrono::duration<double>(
+        std::chrono::steady_clock::now()-last_feedback_).count() > feedback_timeout_) {
+      return hardware_interface::return_type::ERROR;
+    }
   }
   
   // Calculate gap distance: 
@@ -399,7 +424,12 @@ hardware_interface::return_type GripperHardwareInterface::read(
     normalized_closed = static_cast<double>(position_open_register_ - position_register) / range;
   }
   normalized_closed = std::clamp(normalized_closed, 0.0, 1.0);
-  gripper_position_ = gripper_closed_pos_ * normalized_closed;
+  const auto now = std::chrono::steady_clock::now();
+  const double next = joint_open_ + (joint_closed_-joint_open_) * normalized_closed;
+  const double dt = std::chrono::duration<double>(now-last_read_).count();
+  gripper_velocity_ = dt > 0 ? (next-gripper_position_)/dt : 0.0;
+  gripper_position_ = next;
+  last_read_ = now;
 
   // Handle reactivation request
   if (!std::isnan(reactivate_gripper_cmd_))
@@ -427,35 +457,25 @@ hardware_interface::return_type GripperHardwareInterface::write(
   if (std::isnan(gripper_position_command_)) {
     return hardware_interface::return_type::OK;
   }
-  double normalized_closed = gripper_position_command_ / gripper_closed_pos_;
+  if (!std::isfinite(gripper_position_command_) ||
+      gripper_position_command_ < std::min(joint_open_, joint_closed_)-1e-8 ||
+      gripper_position_command_ > std::max(joint_open_, joint_closed_)+1e-8) {
+    return hardware_interface::return_type::ERROR;
+  }
+  double normalized_closed = (gripper_position_command_-joint_open_) / (joint_closed_-joint_open_);
   normalized_closed = std::clamp(normalized_closed, 0.0, 1.0);
   
   double gripper_pos = normalized_closed * 255.0;
   const uint8_t cmd = static_cast<uint8_t>(std::round(gripper_pos));
-  write_command_.store(cmd);
-
-  // 直接在 write() 中发送，不等待后台线程的 10ms 等待
-  try {
-    const double desired = gripper_position_command_;
-    if (suppress_writes_until_command_change_) {
-      if (!std::isnan(last_command_position_) && std::abs(desired - last_command_position_) < 1e-6) {
-        return hardware_interface::return_type::OK;
-      }
-      suppress_writes_until_command_change_ = false;
+  if (write_fault_.load()) return hardware_interface::return_type::ERROR;
+  if (suppress_writes_until_command_change_) {
+    if (std::abs(gripper_position_command_-last_command_position_) < 1e-6) {
+      return hardware_interface::return_type::OK;
     }
-    if (cmd != last_written_command_) {
-      const uint8_t spd = write_speed_.load();
-      const uint8_t frc = write_force_.load();
-      driver_->grip(cmd, spd, frc);
-      last_written_command_ = cmd;
-      last_written_speed_ = spd;
-      last_written_force_ = frc;
-      last_write_time_ = std::chrono::steady_clock::now();
-      last_command_position_ = desired;
-    }
-  } catch (const std::exception& e) {
-    RCLCPP_ERROR(kLogger, "Failed to write gripper command: %s", e.what());
+    suppress_writes_until_command_change_ = false;
   }
+  write_command_.store(cmd);
+  last_command_position_ = gripper_position_command_;
 
   return hardware_interface::return_type::OK;
 }
@@ -469,24 +489,18 @@ void GripperHardwareInterface::background_task()
       // Handle reactivation request
       if (reactivate_gripper_async_cmd_.load())
       {
-        driver_->deactivate();
-        driver_->activate();
         reactivate_gripper_async_cmd_.store(false);
-        reactivate_gripper_async_response_.store(true);
+        reactivate_gripper_async_response_.store(false);
       }
 
-      // 保活（如果配置了）
-      const auto now = std::chrono::steady_clock::now();
-      const bool keepalive_due = (command_keepalive_.count() > 0) && ((now - last_write_time_) >= command_keepalive_);
-      if (keepalive_due) {
+      const uint8_t pending = write_command_.load();
+      if (pending != last_written_command_ && !write_fault_.load()) {
         try {
-          const uint8_t cmd = write_command_.load();
-          const uint8_t spd = write_speed_.load();
-          const uint8_t frc = write_force_.load();
-          driver_->grip(cmd, spd, frc);
-          last_write_time_ = now;
+          driver_->grip(pending, write_speed_.load(), write_force_.load());
+          last_written_command_ = pending;
         } catch (const std::exception& e) {
-          RCLCPP_ERROR(kLogger, "Keepalive write failed: %s", e.what());
+          write_fault_.store(true);
+          RCLCPP_ERROR(kLogger, "Gripper command failed: %s", e.what());
         }
       }
 
@@ -505,6 +519,7 @@ void GripperHardwareInterface::background_task()
       {
         std::lock_guard<std::mutex> lock(registers_mutex_);
         latest_registers_ = state;
+        last_feedback_ = std::chrono::steady_clock::now();
       }
 
       // 直接在后台线程以 ~100Hz 发布寄存器数据
