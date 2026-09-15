@@ -197,3 +197,14 @@ Ubuntu 上还需验证：mock 采集后规划执行；障碍盒阻挡目标时�
 这些属于尚未执行的集成验收，不应把本地单元测试结果解释为真机验证。
 
 接口依据：https://docs.ros.org/en/humble/p/moveit_msgs/
+该界面用于选定一台机械臂，连接已有的 MoveIt/ros2_control 后端。
+
+```bash
+ros2 launch fr3_control_panel teaching_ui.launch.py config:=/absolute/path/to/selected-arm-panel.yaml
+```
+
+界面显示六轴关节角度、夹爪开合程度和 TCP 位姿；笛卡尔目标通过 MoveIt `MoveGroup` 进行带碰撞场景的规划，
+支持仅规划预览或规划并到达。提供“采集抓取位姿”“采集展示位姿”“采集途经点”按钮，点位可双击回填、修改、
+删除、保存和载入 JSON，并支持“抓取→途经点→展示”流程。没有实测反馈时不会采集虚假点位。
+
+该 UI 只发送统一的 MoveIt action 和 `GripperCommand` action。自动检测流程运行时不要同时用它发送运动目标。

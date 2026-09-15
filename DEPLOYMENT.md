@@ -130,3 +130,13 @@ ros2 service call /inspection/stop std_srvs/srv/Trigger '{}'
 
 仍需在Ubuntu完成构建、单臂小步、夹爪映射/保持、双臂规划、测试件视觉、交接逐级验收。
 GitHub工作流未运行前不能视为绿色构建。当前记录见 VALIDATION.md。
+
+## 单臂示教 UI
+
+项目提供 PyQt5 单臂示教界面，显示六轴关节角、夹爪开合百分比和 TCP 的 XYZ/RPY，支持笛卡尔目标的 MoveIt 碰撞规划、仅规划预览、实际到达、抓取/展示/途经点人工采集、JSON 点位管理，以及抓取→途经点→展示流程：
+
+```bash
+ros2 launch fr3_control_panel teaching_ui.launch.py config:=/absolute/path/to/selected-arm-panel.yaml
+```
+
+配置中的 `group`、`joints`、`tcp`、`move_action`、`fk_service`、`gripper_action` 必须与选定机械臂一致。该 UI 与自动检测任务互斥，自动检测运行时不要使用它发送运动目标。
