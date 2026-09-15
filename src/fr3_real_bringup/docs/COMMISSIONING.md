@@ -52,7 +52,7 @@ fairino_hardware_v3_* 版本。选定版本后：
     ros2 pkg prefix --share YOUR_DRIVER_PACKAGE
     rg -n 'FairinoHardwareInterface|CONTROLLER_IP_ADDRESS|ServoJ|GetActualJointPosDegree' "$(ros2 pkg prefix --share YOUR_DRIVER_PACKAGE)"
 
-部分版本把 IP 写在头文件，所以本包不会假装 robot_ip 参数一定有效。确认 SDK 架构：
+本集成仓库的 v3.9.7 适配器从 ros2_control 的 `robot_ip` 参数读取 IP；启动时可用 `robot_ip:=...` 手动覆盖。
 
     uname -m
     file path/to/libfairino*.so

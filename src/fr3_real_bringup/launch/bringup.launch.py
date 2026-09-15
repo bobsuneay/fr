@@ -61,6 +61,7 @@ def start(context):
         'position_mode_speed_register': arg('position_mode_speed_register'),
         'target_force_percent': arg('target_force_percent'),
         'gripper_closed_position': arg('gripper_closed_position'),
+        'robot_ip': arg('robot_ip'),
     })
     urdf = document.toxml()
     for mesh in ET.fromstring(urdf).iter('mesh'):
@@ -149,5 +150,6 @@ def generate_launch_description():
         DeclareLaunchArgument('position_mode_speed_register', default_value='1000'),
         DeclareLaunchArgument('target_force_percent', default_value='50'),
         DeclareLaunchArgument('gripper_closed_position', default_value='0.1'),
+        DeclareLaunchArgument('robot_ip', default_value='192.168.58.2'),
         OpaqueFunction(function=start),
     ])
