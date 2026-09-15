@@ -1,4 +1,21 @@
-# FR3 双臂检测 sim2real 集成工作空间
+# FR3 单臂基础 UI（当前交付入口）
+
+按当前需求先实现单臂实时状态、手动采点、MoveIt 碰撞规划和人工确认夹取。使用说明见 **[SINGLE_ARM.md](SINGLE_ARM.md)**。
+单臂构建与运行不依赖 fr3-sim/Gazebo/双臂检测包：
+
+```bash
+bash scripts/build_single_arm.sh
+source install_single/setup.bash
+ros2 launch fr3_control_panel single_arm.launch.py mode:=mock enable_execution:=true
+```
+
+真机版本使用 `mode:=real` 和现场配置，IP 可在 UI 手动填写，默认 `192.168.58.2`。不要直接用示例标定运行真机。
+
+---
+
+## 历史双臂集成说明（不是当前单臂基础版启动方法）
+
+以下旧入口暂保留以免破坏先前任务；当前单臂构建脚本不会构建或启动它们。
 
 本版保留完整 Gazebo 检测任务，已接入双臂真实自动检测后端：MoveIt规划、HKV GripperCommand、持续双指寄存器接触验证、独立视觉位姿与交接验证。
 适配Ubuntu22.04/ROS2 Humble/x86_64/Fairino3.9.7。完整步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。

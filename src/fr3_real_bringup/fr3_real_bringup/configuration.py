@@ -58,7 +58,7 @@ def validate_cell(cfg):
     return cfg
 
 
-def validate_real(cfg, confirmed):
+def validate_real(cfg, confirmed, robot_ip=None):
     if not confirmed:
         raise ValueError('Real hardware may send ServoJ as soon as it starts. '
                          'Complete docs/COMMISSIONING.md, then pass confirm_real:=true.')
@@ -69,6 +69,8 @@ def validate_real(cfg, confirmed):
         ipaddress.IPv4Address(cfg.get(key, ''))
     if cfg['controller_ip'] != cfg['driver_configured_ip']:
         raise ValueError('Robot IP differs from the address configured in the actual driver')
+    if robot_ip is not None and str(ipaddress.IPv4Address(robot_ip)) != cfg['controller_ip']:
+        raise ValueError('界面/launch IP 与已验收 real.yaml 的 controller_ip 不一致，请核对后更新配置')
     for key in ('driver_reviewed', 'geometry_tcp_payload_verified',
                 'workcell_estop_and_low_speed_verified'):
         if cfg.get('checks', {}).get(key) is not True:
@@ -76,6 +78,21 @@ def validate_real(cfg, confirmed):
     rate = cfg.get('update_rate')
     if isinstance(rate, bool) or not isinstance(rate, int) or not 1 <= rate <= 1000:
         raise ValueError('update_rate must be an integer in [1, 1000], matched to your driver')
+    if cfg['driver_package'] != 'fairino_hardware_v3_9_7' or cfg['firmware_version'] != '3.9.7':
+        raise ValueError('此单臂交付只适配 fairino_hardware_v3_9_7 / 3.9.7，其他版本需单独适配')
+    if rate != 125:
+        raise ValueError('当前 ServoJ 周期为 0.008 s，update_rate 必须为 125 Hz')
+    gripper = cfg.get('gripper', {})
+    for key, low, high in [('position_open_register', 0, 1000),
+                           ('position_closed_register', 0, 1000),
+                           ('position_mode_speed_register', 200, 1500),
+                           ('target_force_percent', 1, 100),
+                           ('baud_rate', 1, 4000000), ('slave_address', 1, 247)]:
+        value = gripper.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ValueError('请填写已验收的 gripper.'+key)
+    if gripper['position_open_register'] <= gripper['position_closed_register']:
+        raise ValueError('当前驱动要求夹爪张开寄存器值大于闭合值')
     return cfg
 
 

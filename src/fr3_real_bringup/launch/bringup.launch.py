@@ -16,6 +16,7 @@ import xacro
 from fr3_real_bringup.configuration import (
     exports_plugin, load_yaml, validate_cell, validate_real,
 )
+from fr3_real_bringup.hardware_lease import HardwareLease
 
 
 def start(context):
@@ -35,9 +36,10 @@ def start(context):
     cell = Path(arg('cell')).expanduser().resolve()
     validate_cell(load_yaml(cell))
     update_rate = 100
+    gripper_parameters = {}
     if mode == 'real':
         real = validate_real(load_yaml(Path(arg('real_config')).expanduser()),
-                             flag('confirm_real'))
+                             flag('confirm_real'), arg('robot_ip'))
         selected = real['driver_package']
         # Multiple version packages may export the identical plugin class/library.
         exporters = [
@@ -49,6 +51,8 @@ def start(context):
             raise RuntimeError(f'Expected only {selected} to export the hardware plugin; '
                                f'found {exporters}. Source one matching driver underlay.')
         update_rate = real['update_rate']
+        gripper_parameters = {key: str(value) for key, value in real['gripper'].items()}
+        HardwareLease(arg('robot_ip'), arg('serial_port'))
 
     document = xacro.process_file(str(share/'urdf/robot.urdf.xacro'), mappings={
         'mode': mode, 'cell_file': cell.as_posix(),
@@ -62,6 +66,7 @@ def start(context):
         'target_force_percent': arg('target_force_percent'),
         'gripper_closed_position': arg('gripper_closed_position'),
         'robot_ip': arg('robot_ip'),
+        **gripper_parameters,
     })
     urdf = document.toxml()
     for mesh in ET.fromstring(urdf).iter('mesh'):
@@ -74,7 +79,7 @@ def start(context):
     read = lambda name: load_yaml(share/'config'/name)
     moveit = {
         **robot,
-        'robot_description_semantic': (share/'config/robot.srdf').read_text(encoding='utf-8'),
+        'robot_description_semantic': ParameterValue((share/'config/robot.srdf').read_text(encoding='utf-8'), value_type=str),
         'robot_description_kinematics': read('kinematics.yaml'),
         'robot_description_planning': read('joint_limits.yaml'),
         'planning_pipelines': ['ompl'], 'default_planning_pipeline': 'ompl',

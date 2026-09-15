@@ -12,6 +12,8 @@
   <xacro:arg name="target_force_percent" default="50"/>
   <xacro:arg name="gripper_closed_position" default="0.1"/>
   <xacro:arg name="robot_ip" default="192.168.58.2"/>
+  <xacro:arg name="position_open_register" default="100"/>
+  <xacro:arg name="position_closed_register" default="0"/>
   <xacro:property name="cfg" value="${xacro.load_yaml('$(arg cell_file)')}"/>
   <xacro:property name="t" value="${cfg['table']}"/>
   <xacro:property name="b" value="${cfg['base']}"/>
@@ -156,8 +158,8 @@
         <param name="slave_address">$(arg slave_address)</param>
         <param name="gripper_model">TG-9801</param>
         <param name="gripper_closed_position">$(arg gripper_closed_position)</param>
-        <param name="position_open_register">1000</param>
-        <param name="position_closed_register">0</param>
+        <param name="position_open_register">$(arg position_open_register)</param>
+        <param name="position_closed_register">$(arg position_closed_register)</param>
         <param name="position_mode_speed_register">$(arg position_mode_speed_register)</param>
         <param name="target_force_percent">$(arg target_force_percent)</param>
       </xacro:if>

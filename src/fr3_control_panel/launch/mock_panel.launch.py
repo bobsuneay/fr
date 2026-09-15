@@ -11,6 +11,6 @@ def generate_launch_description():
     share = Path(get_package_share_directory('fr3_real_bringup'))
     return LaunchDescription([
         IncludeLaunchDescription(PythonLaunchDescriptionSource(str(share/'launch/mock.launch.py'))),
-        Node(package='fr3_control_panel', executable='panel', arguments=['--mock'],
+        Node(package='fr3_control_panel', executable='panel', arguments=['--mock', '--allow-execution'],
              output='screen'),
     ])

@@ -3,7 +3,15 @@ firmware_version: ""
 driver_package: ""          # e.g. fairino_hardware_v3_9_7 ONLY if confirmed compatible
 controller_ip: "192.168.58.2"           # actual robot address; launch robot_ip must match
 driver_configured_ip: "192.168.58.2"    # launch-injected ros2_control parameter
-update_rate: 100            # verify against selected driver's ServoJ period
+update_rate: 125            # 0.008 s ServoJ period of the bundled adapter
+gripper:
+  # Examples only: verify endpoints, serial settings and force against your device.
+  position_open_register: 100
+  position_closed_register: 0
+  position_mode_speed_register: 1000
+  target_force_percent: 20
+  baud_rate: 1000000
+  slave_address: 1
 checks:
   driver_reviewed: false    # version, IP, six axes, initial pose sync, error handling
   geometry_tcp_payload_verified: false

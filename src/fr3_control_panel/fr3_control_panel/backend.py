@@ -32,7 +32,7 @@ def ros_pose(values):
 
 
 class Backend(Node):
-    def __init__(self, cfg, mock=False):
+    def __init__(self, cfg, mock=False, allow_execution=False):
         super().__init__('fr3_control_panel')
         self.cfg, self.mock = cfg, mock
         self.lock = threading.RLock()
@@ -45,6 +45,9 @@ class Backend(Node):
         self.payload = False
         self.fault = None
         self.connected = False
+        self.execution_enabled = allow_execution
+        self.motion_armed = False
+        self.grasp_pending = False
         self.create_subscription(JointState, cfg['joint_topic'], self.on_joints,
                                  qos_profile_sensor_data)
         self.move = ActionClient(self, MoveGroup, cfg['move_action'])
@@ -58,33 +61,46 @@ class Backend(Node):
         self.thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.thread.start()
 
-    def connect(self, timeout=5.0):
-        """Check all ROS endpoints used by the panel before enabling control."""
+    def connect(self, timeout=5.0, health_check=None):
+        """Observation/planning do not require an active gripper action server."""
         if self.fault:
             raise RuntimeError(self.fault)
         deadline = time.monotonic() + timeout
-        checks = [('机械臂 MoveIt', self.move), ('夹爪控制器', self.grip)]
-        for label, client in checks:
-            remaining = max(0.1, deadline-time.monotonic())
-            if not client.wait_for_server(timeout_sec=remaining):
-                self.connected = False
-                raise RuntimeError(label+'接口未上线')
-        for label, client in [('TCP 正运动学', self.fk), ('碰撞场景', self.scene)]:
-            remaining = max(0.1, deadline-time.monotonic())
-            if not client.wait_for_service(timeout_sec=remaining):
-                self.connected = False
-                raise RuntimeError(label+'服务未上线')
-        self.connected = True
-        try:
-            self.state()
-        except Exception:
-            self.connected = False
-            raise
-        return True
+        missing = '等待后端'
+        while time.monotonic() < deadline:
+            if self.stop_event.is_set():
+                raise RuntimeError('连接已取消')
+            if health_check:
+                health_check()
+            ready = self.move.server_is_ready() and self.fk.service_is_ready() and self.scene.service_is_ready()
+            if ready:
+                self.connected = True
+                try:
+                    self.state()
+                    return True
+                except RuntimeError as exc:
+                    missing = str(exc)
+                    self.connected = False
+            time.sleep(.1)
+        raise RuntimeError('MoveIt / FK / 场景 / 实时反馈未就绪：'+missing)
+
+    def prepare_connection(self):
+        if self.fault or self.active is not None:
+            raise RuntimeError(self.fault or '仍有活动目标，不能重新连接')
+        self.stop_event.clear()
+
+    def check_namespace_free(self):
+        if self.move.server_is_ready() or self.fk.service_is_ready() or self.grip.server_is_ready():
+            raise RuntimeError('已有 ROS 控制后端，请先退出；自管模式不能接管另一套后端')
 
     def disconnect(self):
         self.cancel()
         self.connected = False
+        self.motion_armed = False
+        with self.lock:
+            self.joints.clear()
+            self.pose = None
+            self.pose_time = 0.0
 
     def on_joints(self, msg):
         now = time.monotonic()
@@ -119,6 +135,12 @@ class Backend(Node):
             raise RuntimeError('请先连接机械臂与夹爪')
         self.stop_event.clear()
 
+    def require_execution(self):
+        if not self.execution_enabled or not self.motion_armed:
+            raise RuntimeError('运动未授权：启动时允许执行，并在界面勾选允许运动')
+        if self.stop_event.is_set():
+            raise RuntimeError('操作已取消')
+
     def capture(self):
         self.state()
         _, values, stamp = self.snapshot()
@@ -132,20 +154,25 @@ class Backend(Node):
         if not self.fk.service_is_ready():
             return
         try:
-            state = self.state()
+            with self.lock:
+                state = self.state()
+                sampled = min(self.joints[n][1] for n in state.name)
         except RuntimeError:
             return
         req = GetPositionFK.Request()
         req.header.frame_id = self.cfg['frame']
         req.fk_link_names = [self.cfg['tcp']]
         req.robot_state.joint_state = state
-        sampled = time.monotonic()
+        # FK age is bounded by the oldest input joint, not by service response time.
         self.fk_pending = self.fk.call_async(req)
 
         def receive(future):
             try:
                 result = future.result()
                 if result.error_code.val != 1 or not result.pose_stamped:
+                    return
+                if (not self.connected or result.fk_link_names != [self.cfg['tcp']]
+                        or result.pose_stamped[0].header.frame_id != self.cfg['frame']):
                     return
                 p = result.pose_stamped[0].pose
                 q = p.orientation
@@ -226,6 +253,10 @@ class Backend(Node):
 
     def motion(self, values, execute=False):
         self.state()
+        if execute:
+            self.require_execution()
+        if self.grasp_pending:
+            raise RuntimeError('夹持状态待确认；请确认并挂载物体，或张开释放后再运动')
         goal = MoveGroup.Goal()
         req = goal.request
         req.group_name = self.cfg['group']
@@ -267,18 +298,24 @@ class Backend(Node):
 
     def gripper(self, opening, grasp=False):
         self.state()
+        self.require_execution()
         if self.payload and opening > 0:
             raise RuntimeError('当前挂载了物体，请使用“释放物体”保持碰撞场景一致')
         goal = GripperCommand.Goal()
         goal.command.position = opening_to_joint(opening, self.cfg['closed_position'])
         goal.command.max_effort = 0.0  # Actual force configured in HKV hardware parameters.
+        if grasp:
+            # Even an uncertain close result can leave an object in the fingers.
+            self.grasp_pending = True
         result = self.action(self.grip, goal, 20)
         if not (result.reached_goal or result.stalled):
             raise RuntimeError('夹爪未到位且未报告接触停滞')
         if opening > 0 and not result.reached_goal:
             raise RuntimeError('夹爪张开/设定开度时停滞，未到目标；保留挂载物体模型')
         if grasp and not self.mock and not result.stalled:
-            raise RuntimeError('夹爪完全闭合但没有接触停滞反馈，可能空抓；停止搬运')
+            raise RuntimeError('夹爪完全闭合但没有停滞，可能空抓；不搬运，请检查并释放')
+        if opening == 100 and result.reached_goal:
+            self.grasp_pending = False
 
     def apply_scene(self, scene):
         if not self.scene.wait_for_service(timeout_sec=3):
@@ -303,6 +340,7 @@ class Backend(Node):
         self.payload = True
         try:
             self.apply_scene(scene)
+            self.grasp_pending = False
         except Exception:
             self.fault = '夹取后物体碰撞模型更新失败；需核对场景和物体后重启面板'
             raise
@@ -323,8 +361,12 @@ class Backend(Node):
             scene.robot_state.attached_collision_objects = [AttachedCollisionObject(
                 link_name=self.cfg['tcp'], object=CollisionObject(id='panel_payload', operation=1))]
             # MoveIt detaches the object into the world at the current pose.
-            self.apply_scene(scene)
-            self.payload = False
+            try:
+                self.apply_scene(scene)
+                self.payload = False
+            except Exception:
+                self.fault = '释放后的场景状态不确定；确认物体和碰撞场景后重启面板'
+                raise
 
     def obstacle(self, name, values, size):
         if not name.strip() or name == 'panel_payload' or any(x <= 0 for x in size):

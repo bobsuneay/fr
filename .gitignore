@@ -12,3 +12,6 @@ vendor/
 *.exe
 *.zip
 config/local/
+build_single/
+install_single/
+log_single/

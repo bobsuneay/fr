@@ -1,5 +1,11 @@
 # FR3 + HKV PyQt 控制台
 
+> 当前基础版请以仓库根目录 `SINGLE_ARM.md` 为准；下文为旧版外部后端使用记录。
+> 新入口：`ros2 launch fr3_control_panel single_arm.launch.py mode:=mock enable_execution:=true`。
+> 支持 UI IP/串口输入和自管单臂后端；运动需启动授权加 UI 勾选。抓取闭合后暂停，必须点击第二步人工确认再搬运。
+> 外部后端模式需 `ros2 run fr3_control_panel panel --allow-execution` 才能勾选运动；不加该参数只观察和规划。
+> 连接检查不再要求夹爪 action 激活；不会将停滞自动解释为可靠夹持。不要按旧文启动多份后端。
+
 面向 Ubuntu 22.04 / ROS 2 Humble / PyQt5。默认 FR3，基于用户提供的
 `frcobot_ros2-v3.0.0_robotV3.9.7` 与 `ros2_hkv_gripper`，复用随本交付提供的
 `fr3_real_bringup` 单臂组合模型。Windows 可运行 `--demo` 查看界面，不能加载 Linux SDK。

@@ -28,6 +28,7 @@ def test_motion_goal_serializes_and_keeps_collision_scene(execute):
         captured.append(goal)
         return result
     dummy = SimpleNamespace(cfg=cfg, state=lambda: None, action=action, move=None,
+                            require_execution=lambda: None, grasp_pending=False,
                             display=SimpleNamespace(publish=lambda msg: serialize_message(msg)))
     Backend.motion(dummy, [.3, .1, .4, 180, 0, 90], execute)
     goal = captured[0]

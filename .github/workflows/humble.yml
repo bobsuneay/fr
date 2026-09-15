@@ -1,6 +1,21 @@
 name: Humble build and offline regression
 on: [push, pull_request, workflow_dispatch]
 jobs:
+  single-arm:
+    runs-on: ubuntu-22.04
+    container: ros:humble-ros-base-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build single-arm dependency set without Gazebo
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y python3-colcon-common-extensions python3-rosdep python3-pytest fonts-noto-cjk
+          rosdep update
+          bash scripts/build_single_arm.sh
+          source /opt/ros/humble/setup.bash
+          source install_single/setup.bash
+          QT_QPA_PLATFORM=offscreen python3 -m pytest src/fr3_control_panel/test src/fr3_real_bringup/test -q
   humble:
     runs-on: ubuntu-22.04
     container: ros:humble-ros-base-jammy

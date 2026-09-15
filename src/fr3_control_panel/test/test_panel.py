@@ -55,6 +55,9 @@ class FakeBackend:
     mock = True
     payload = False
     fault = None
+    connected = True
+    execution_enabled = True
+    grasp_pending = False
 
     def __init__(self, fail=None):
         self.calls = []
@@ -106,6 +109,11 @@ def test_sequence_fail_closed(app, failure, expected):
     panel.points = {'抓取': [0]*6, '展示': [1]*6, '途经1': [.5]*6}
     panel.pick()
     finish(app, panel)
+    if failure is None:
+        assert [x[0] for x in backend.calls] == ['gripper', 'motion', 'gripper']
+        assert panel.grasp_ready  # No automatic transport based on a stalled gripper.
+        panel.confirm_grasp()
+        finish(app, panel)
     assert [x[0] for x in backend.calls] == expected
     if failure is None:
         assert backend.calls[-2][1] == [.5]*6
@@ -121,3 +129,60 @@ def test_capture_and_preview(app):
     demo = Panel(config())
     assert all(not button.isEnabled() for button in demo.command_buttons)
     demo.close()
+
+
+def test_motion_requires_explicit_arming_but_capture_does_not(app):
+    panel = Panel(config(), FakeBackend())
+    assert all(not b.isEnabled() for b in panel.motion_buttons)
+    assert next(b for b in panel.command_buttons if b.text() == '采集抓取位姿').isEnabled()
+    panel.arm_motion.setChecked(True)
+    assert next(b for b in panel.motion_buttons if b.text() == '规划并到达').isEnabled()
+    panel.backend.execution_enabled = False
+    panel.refresh()
+    assert all(not b.isEnabled() for b in panel.motion_buttons)
+    panel.close()
+
+
+def test_reorder_points_and_confirmation_keeps_original_snapshot(app):
+    backend = FakeBackend()
+    panel = Panel(config(), backend)
+    panel.points = {'抓取': [0]*6, '展示': [1]*6, '途经1': [.4]*6, '途经2': [.6]*6}
+    panel.update_points()
+    panel.list.setCurrentRow(3)
+    panel.reorder_selected(-1)
+    assert list(panel.points)[2:] == ['途经2', '途经1']
+    panel.pick()
+    finish(app, panel)
+    panel.points['展示'] = [9]*6
+    panel.confirm_grasp()
+    finish(app, panel)
+    assert [call[1] for call in backend.calls if call[0] == 'motion'] == [[0]*6, [.6]*6, [.4]*6, [1]*6]
+    panel.close()
+
+
+def test_cancel_before_confirmation_blocks_transport(app):
+    panel = Panel(config(), FakeBackend())
+    panel.points = {'抓取': [0]*6, '展示': [1]*6}
+    panel.pick()
+    finish(app, panel)
+    panel.cancel()
+    with pytest.raises(RuntimeError):
+        panel.confirm_grasp()
+    assert not panel.backend.payload
+    panel.close()
+
+
+def test_disconnect_does_not_clear_busy_until_worker_exits(app):
+    import threading
+    backend = FakeBackend()
+    backend.disconnect = lambda: setattr(backend, 'connected', False)
+    panel = Panel(config(), backend)
+    gate = threading.Event()
+    panel.run('slow action', lambda: gate.wait(2))
+    panel.disconnect_devices()
+    assert panel.busy and panel.disconnecting
+    assert not panel.connect_button.isEnabled()
+    gate.set()
+    finish(app, panel)
+    assert not backend.connected
+    panel.close()

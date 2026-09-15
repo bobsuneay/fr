@@ -4,6 +4,6 @@ setup(name='fr3_control_panel', version='0.1.0', packages=find_packages(),
                   ('share/fr3_control_panel', ['package.xml', 'README.md']),
                   ('share/fr3_control_panel/config', ['config/panel.yaml']),
                   ('share/fr3_control_panel/scripts', ['scripts/start_panel.sh', 'scripts/start_panel.bat']),
-                  ('share/fr3_control_panel/launch', ['launch/mock_panel.launch.py', 'launch/teaching_ui.launch.py'])],
+                  ('share/fr3_control_panel/launch', ['launch/mock_panel.launch.py', 'launch/teaching_ui.launch.py', 'launch/single_arm.launch.py'])],
       install_requires=['setuptools'],
       entry_points={'console_scripts': ['panel = fr3_control_panel.app:main']})
